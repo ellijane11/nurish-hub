@@ -1,0 +1,57 @@
+{
+    "3333333333": {
+        "name": "dana",
+        "email": "dana@",
+        "password": "36ecf9133cf3bb7963d53f30ff300c9f376c7ba12eefa341114563518bea8ec5"
+    },
+    "5555555555": {
+        "name": "diana",
+        "email": "dianada",
+        "password": "a5ad7e6d5225ad00c5f05ddb6bb3b1597a843cc92f6cf188490ffcb88a1ef4ef"
+    },
+    "4556867644": {
+        "name": "sahi",
+        "email": "sahithi@gmail.com",
+        "password": "68c77fb6829a311d9978ac817ea601444593cb05ef7ed060020fc488c9714bd2"
+    },
+    "1234567890": {
+        "name": "sahi",
+        "email": "sahi@1234",
+        "password": "c775e7b757ede630cd0aa1113bd102661ab38829ca52a6422ab782862f268646"
+    },
+    "0987654321": {
+        "name": "deerter",
+        "email": "sahithi@gmail.com",
+        "password": "ef797c8118f02dfb649607dd5d3f8c7623048c9c063d532cc95c5ed7a898a64f"
+    },
+    "6666666666": {
+        "name": "sara",
+        "email": "sara@gmail.com",
+        "password": "28ad9b1993d47fdf4a8ade7c9566f523084f2750254690e320871974ac22dd88",
+        "dismissed": [
+            "6666666666175580101431609585572d:accepted",
+            "666666666617558010228804137bb549:picked_up"
+        ],
+        "seen": {
+            "donor": {
+                "6666666666175580101431609585572d": {
+                    "accepted": true
+                },
+                "666666666617558010228804137bb549": {
+                    "picked_up": true
+                }
+            },
+            "collector": {}
+        }
+    },
+    "6666666667": {
+        "name": "lara",
+        "email": "lara@gmail.com",
+        "password": "318e58d6a7372ab8953f8fc8b59bd7e4b74c5cb25529cbc647a3aec35decfa1a"
+    },
+    "8888888888": {
+        "name": "dina",
+        "email": "dina@gmail.com",
+        "password": "ffec2b04828a94f08d28b1d93bd9702f0e3395930cc3f3593d1182beedc23561"
+    }
+}
