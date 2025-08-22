@@ -12,6 +12,9 @@
 #        - donation.collector_name / collector_phone
 #        - users[phone].seen.donor / users[phone].seen.collector structure
 #   5) Cleaned logic & helpers (gmaps links, time formatting, etc.)
+#   6) Map-click exact location selection for donors (added in this version)
+#   7) Address-first UX: donors type address → app geocodes and centers map → donor clicks to fine-tune
+#   8) Quantity field: donors enter quantity (e.g., "10 meals", "5 kg") — saved & displayed
 #
 # Data files:
 #   - donations.json
@@ -133,6 +136,11 @@ def load_donations() -> List[Dict[str, Any]]:
             except Exception:
                 d["lon"] = None
                 changed = True
+
+        # Ensure quantity field exists for compatibility (new feature)
+        if "quantity" not in d:
+            d["quantity"] = None
+            changed = True
 
     if changed:
         save_json(DATA_FILE, donations)
@@ -368,7 +376,7 @@ def donor_page():
 
             if not is_event_seen:
                 st.info(
-                    f"Your donation *{d.get('food','?')}* at *{d.get('location','?')}* "
+                    f"Your donation *{d.get('food','?')}* ({d.get('quantity','?')}) at *{d.get('location','?')}* "
                     f"was *accepted* by *{cname}* (📞 {cphone}) at {when}."
                 )
                 if st.button("Mark as seen", key=seen_key):
@@ -399,7 +407,7 @@ def donor_page():
 
             if not is_event_seen:
                 st.success(
-                    f"Your donation *{d.get('food','?')}* at *{d.get('location','?')}* "
+                    f"Your donation *{d.get('food','?')}* ({d.get('quantity','?')}) at *{d.get('location','?')}* "
                     f"was *picked up* by *{cname}* at {when}!"
                 )
                 if st.button("Mark as seen", key=seen_key):
@@ -422,7 +430,7 @@ def donor_page():
         st.subheader("Your Active Donations")
         for idx, d in enumerate(sorted(active_donations, key=lambda x: x.get("created_at") or 0, reverse=True)):
             st.info(
-                f"🍲 {d.get('food','?')} | 📍 {d.get('location','?')} | ⏳ {d.get('availability','?')} | "
+                f"🍲 {d.get('food','?')} • {d.get('quantity','?')} | 📍 {d.get('location','?')} | ⏳ {d.get('availability','?')} | "
                 f"🕒 Created: {fmt_time(d.get('created_at'))}"
             )
             col1, col2 = st.columns(2)
@@ -453,7 +461,7 @@ def donor_page():
             # Optional donor 'cancelled' notification seen flag
             if not is_seen(phone, "donor", did, "cancelled"):
                 st.warning(
-                    f"Cancelled: {d.get('food','?')} • {d.get('location','?')} • "
+                    f"Cancelled: {d.get('food','?')} • {d.get('quantity','?')} • {d.get('location','?')} • "
                     f"🕒 Cancelled: {when}"
                 )
                 if st.button("Mark as seen", key=f"seen_cancel_{did}_{idx}"):
@@ -470,25 +478,115 @@ def donor_page():
                         st.rerun()
 
     # ---------------------------
-    # ADD NEW DONATION
+    # ADD NEW DONATION (UPDATED: address-first + map-click adjust + quantity)
     # ---------------------------
     st.write("---")
     st.subheader("Add a New Donation")
 
+    # We'll display a little two-step UX in the same form:
+    # 1) User types address (location_name). We attempt to geocode it to center the map.
+    # 2) Map is shown centered on geocoded point (or fallback). Donor clicks to fine-tune.
+    # 3) On Save, we prioritize clicked coordinates, otherwise use geocoded coords.
+
     with st.form("donor_form_main"):
         food_item = st.text_input("🍲 Food Item")
+        quantity_text = st.text_input("📦 Quantity (e.g. '10 meals', '5 kg rice', '20 boxes')")  # NEW FIELD
         availability = st.text_input("📅 Available Until (e.g. 'Tonight 9 PM')")
         location_name = st.text_input("📍 Enter Your Location (required, e.g., 'MG Road, Bangalore')")
+
+        st.markdown("**📍 Recommended:** First type a specific address/landmark; the map will center there. Then click the exact pickup spot on the map to fine-tune.")
+        st.markdown("If you leave the map un-clicked, we'll use the geocoded location as the pickup point (if geocoding succeeded).")
+
+        # Determine map center: try geocoding the typed location for a nicer initial view.
+        # We compute this inside the form so the user sees the centered map while the form is open.
+        default_center = [12.9716, 77.5946]  # Bangalore fallback
+        map_center = default_center
+        geocoded_lat = None
+        geocoded_lon = None
+        geocoded_address_display = None
+
+        try:
+            if location_name and location_name.strip():
+                # Try geocoding with appended country to improve accuracy
+                safe_query = location_name.strip()
+                try:
+                    geocoded = geolocator.geocode(safe_query + ", India")
+                except Exception:
+                    # if the above fails (rate limit or other), try plain query
+                    geocoded = None
+                    try:
+                        geocoded = geolocator.geocode(safe_query)
+                    except Exception:
+                        geocoded = None
+
+                if geocoded:
+                    geocoded_lat = geocoded.latitude
+                    geocoded_lon = geocoded.longitude
+                    geocoded_address_display = getattr(geocoded, "address", None)
+                    map_center = [geocoded_lat, geocoded_lon]
+        except Exception:
+            # ignore geocode errors here; we'll try again on submit
+            map_center = default_center
+            geocoded_lat = None
+            geocoded_lon = None
+
+        # Build the map centered at map_center, show a suggested marker when geocoded is available.
+        zoom_level = 14 if map_center != default_center else 5
+        m = folium.Map(location=map_center, zoom_start=zoom_level)
+
+        if geocoded_lat and geocoded_lon:
+            # add a suggested marker
+            folium.Marker(
+                [geocoded_lat, geocoded_lon],
+                tooltip="Suggested location (from address). Click the map to fine-tune.",
+                popup=geocoded_address_display or location_name
+            ).add_to(m)
+
+        st.write("(Click once on the map to set the final pickup point. If you click, the pin will use the clicked coordinates.)")
+        map_data = st_folium(m, height=380, width=700)
+
         submitted = st.form_submit_button("Save Donation")
 
+    # Handle submit outside the form block
     if submitted:
-        if not (food_item and availability and location_name):
-            st.error("⚠ Please fill all required fields, including location.")
+        if not (food_item and quantity_text and availability and location_name):
+            st.error("⚠ Please fill all required fields (food item, quantity, availability, and location text or use the map click).")
         else:
+            chosen_lat = None
+            chosen_lon = None
+
+            # 1) Priority: use last map click if present
             try:
-                loc = geolocator.geocode(location_name)
-                if loc:
-                    lat, lon = loc.latitude, loc.longitude
+                if map_data and map_data.get("last_clicked"):
+                    chosen_lat = map_data["last_clicked"]["lat"]
+                    chosen_lon = map_data["last_clicked"]["lng"]
+            except Exception:
+                chosen_lat = None
+                chosen_lon = None
+
+            # 2) Fallback: use geocoded coords we computed earlier (or re-run geocode if needed)
+            if chosen_lat is None:
+                # attempt geocode again robustly (in case earlier attempt was skipped)
+                try:
+                    loc = geolocator.geocode(location_name.strip() + ", India")
+                    if loc:
+                        chosen_lat = loc.latitude
+                        chosen_lon = loc.longitude
+                except Exception:
+                    # last resort: try without appending country
+                    try:
+                        loc = geolocator.geocode(location_name.strip())
+                        if loc:
+                            chosen_lat = loc.latitude
+                            chosen_lon = loc.longitude
+                    except Exception:
+                        chosen_lat = None
+                        chosen_lon = None
+
+            if chosen_lat is None or chosen_lon is None:
+                st.error("⚠ Could not determine exact location. Please click a point on the map or provide a more specific address.")
+            else:
+                try:
                     unique_id = f"{phone}{int(time.time()*1_000_000)}{uuid4().hex[:6]}"
 
                     new_donation = {
@@ -496,10 +594,11 @@ def donor_page():
                         "donor": st.session_state.user["name"],
                         "phone": phone,
                         "food": food_item,
+                        "quantity": quantity_text,
                         "availability": availability,
                         "location": location_name,
-                        "lat": lat,
-                        "lon": lon,
+                        "lat": float(chosen_lat),
+                        "lon": float(chosen_lon),
                         "status": "active",
                         "collector_name": None,
                         "collector_phone": None,
@@ -511,12 +610,10 @@ def donor_page():
 
                     st.session_state.donations.append(new_donation)
                     update_donations()
-                    st.success("🎉 Donation saved successfully!")
+                    st.success("🎉 Donation saved successfully with exact location!")
                     st.rerun()
-                else:
-                    st.error("⚠ Could not find that location. Please try a more specific address.")
-            except Exception:
-                st.error("⚠ Error processing location. Please try again.")
+                except Exception:
+                    st.error("⚠ Error saving donation. Please try again.")
 
     # ---------------------------
     # DONATION HISTORY
@@ -530,7 +627,7 @@ def donor_page():
                 picked_at = fmt_time(d.get("picked_up_at"))
                 cancelled_at = fmt_time(d.get("cancelled_at"))
                 st.markdown(
-                    f"- **{d.get('food','?')}** • 📍 {d.get('location','?')} • "
+                    f"- **{d.get('food','?')}** • **{d.get('quantity','?')}** • 📍 {d.get('location','?')} • "
                     f"🕒 Created: {fmt_time(d.get('created_at'))} • "
                     f"🏷 Status: `{status}`"
                     + (f" • 🤝 Accepted: {accepted_at}" if d.get("accepted_at") else "")
@@ -621,7 +718,7 @@ def collector_page():
             cname = d.get("collector_name") or "Collector"
             extra += f" (by {cname})"
         popup_html = (
-            f"<b>{d.get('food','?')}</b> by {d.get('donor','?')}"
+            f"<b>{d.get('food','?')}</b> • <b>{d.get('quantity','?')}</b> by {d.get('donor','?')}"
             f"<br>📍 {d.get('location','?')}"
             f"<br>⏳ {d.get('availability','?')}"
             f"<br>📞 {d.get('phone','?')}"
@@ -634,7 +731,7 @@ def collector_page():
         folium.Marker(
             [d["lat"], d["lon"]],
             popup=popup_html,
-            tooltip=f"{d.get('food','?')} by {d.get('donor','?')}",
+            tooltip=f"{d.get('food','?')} ({d.get('quantity','?')}) by {d.get('donor','?')}",
             icon=folium.Icon(color="green", icon="cutlery", prefix="fa"),
         ).add_to(m)
 
@@ -647,7 +744,7 @@ def collector_page():
     for d in nearby_donors:
         status = d.get("status", "active")
         if status == "active" or (status == "accepted" and d.get("collector_phone") == me_phone):
-            label = f"{d.get('food','?')} • {d.get('donor','?')}"
+            label = f"{d.get('food','?')} • {d.get('quantity','?')} • {d.get('donor','?')}"
             if "distance_km" in d:
                 label += f" • {d['distance_km']} km"
             label += f" • Status: {status}"
@@ -667,8 +764,9 @@ def collector_page():
             status_line += f" (by {cname}, 📞 {cphone})"
 
         st.success(
-            f"👤 Donor:** {chosen.get('donor','?')}\n\n"
+            f"👤 Donor: {chosen.get('donor','?')}\n\n"
             f"- 🍲 Food: {chosen.get('food','?')}\n"
+            f"- 📦 Quantity: {chosen.get('quantity','?')}\n"
             f"- 📞 Phone: {chosen.get('phone','?')}\n"
             f"- 📍 Location: {chosen.get('location','?')}\n"
             f"- ⏳ Available Until: {chosen.get('availability','?')}\n"
@@ -738,7 +836,7 @@ def collector_page():
                 row = st.container()
                 with row:
                     st.info(
-                        f"- 🍲 {d.get('food','?')} • 👤 Donor: {d.get('donor','?')} • "
+                        f"- 🍲 {d.get('food','?')} • {d.get('quantity','?')} • 👤 Donor: {d.get('donor','?')} • "
                         f"📍 {d.get('location','?')} • 🕒 Accepted: {fmt_time(d.get('accepted_at'))}"
                     )
                     c1, c2 = st.columns(2)
@@ -769,7 +867,7 @@ def collector_page():
         if picked_by_me:
             for d in sorted(picked_by_me, key=lambda x: x.get("picked_up_at") or 0, reverse=True):
                 st.success(
-                    f"- 🍲 {d.get('food','?')} • 👤 Donor: {d.get('donor','?')} • "
+                    f"- 🍲 {d.get('food','?')} • {d.get('quantity','?')} • 👤 Donor: {d.get('donor','?')} • "
                     f"📍 {d.get('location','?')} • 🕒 Picked Up: {fmt_time(d.get('picked_up_at'))}"
                 )
         else:
