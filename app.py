@@ -1227,11 +1227,13 @@ def community_page():
         st.image(image, caption=caption, use_container_width=True)
 
     # Display gallery
+    # Display gallery
     st.subheader("🌟 Community Gallery")
+    metadata_path = "image_metadata.json"
     if os.path.exists(metadata_path):
-        try:
-            with open(metadata_path, "r") as f:
-                metadata = json.load(f)
+      try:
+        with open(metadata_path, "r") as f:
+            metadata = json.load(f)
         except json.JSONDecodeError:
             metadata = {}
     else:
@@ -1242,6 +1244,7 @@ def community_page():
         filename = os.path.basename(img_path)
         caption = metadata.get(filename, "No caption provided")
         st.image(img_path, caption=caption, use_container_width=True)
+
 
 
 
@@ -1300,4 +1303,5 @@ def main_router():
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     main_router()
+
 
