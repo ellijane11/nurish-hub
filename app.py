@@ -536,10 +536,10 @@ def feedback_widget(role: str, possible_donation_id: Optional[str] = None, statu
     block_key = f"feedback_block_{role}_{possible_donation_id or 'none'}"
 
     st.write("---")
-    st.subheader("📝 Share Feedback (optional)")
-    st.caption("We appreciate your thoughts. This is anonymous if you choose, and we don’t reply individually.")
+    with st.expander("📝 Share Feedback (optional)"):
+     st.caption("We appreciate your thoughts. This is anonymous if you choose, and we don’t reply individually.")
 
-    with st.form(f"form_feedback_{block_key}"):
+     with st.form(f"form_feedback_{block_key}"):
         txt = st.text_area(
             "Your feedback",
             help="Share anything about your experience. (Min 5 characters)",
@@ -1174,6 +1174,7 @@ def collector_page():
 # ---------------------------
     # FEEDBACK (COLLECTOR)
     # ---------------------------
+    
     feedback_widget(role="collector")
 
     if st.button("⬅ Back", key="btn_back_collector"):
@@ -1305,7 +1306,6 @@ def main_router():
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     main_router()
-
 
 
 
