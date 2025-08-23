@@ -1,28 +1,3 @@
-# app.py
-# =============================================================================
-# 🍲 FOOD IS HOPE — Surplus Food Donation Platform (Streamlit)
-# =============================================================================
-# Key features in this version:
-#   1) Donor notifications ("Accepted", "Picked Up") can be MARKED AS SEEN and
-#      will no longer pop up every time for that user.
-#   2) Collector can CANCEL an accepted donation (returns it to 'active').
-#   3) Robust button keys to avoid StreamlitDuplicateElementKey errors.
-#   4) Backward-compatible data migration for newly introduced fields:
-#        - donation.status timestamps (created_at, accepted_at, picked_up_at, cancelled_at)
-#        - donation.collector_name / collector_phone
-#        - users[phone].seen.donor / users[phone].seen.collector structure
-#   5) Cleaned logic & helpers (gmaps links, time formatting, etc.)
-#   6) Map-click exact location selection for donors (added in this version)
-#   7) Address-first UX: donors type address → app geocodes and centers map → donor clicks to fine-tune
-#   8) Quantity field: donors enter quantity (e.g., "10 meals", "5 kg") — saved & displayed
-#
-# Data files:
-#   - donations.json
-#   - users.json
-#
-# Author: You ✨
-# =============================================================================
-
 import streamlit as st
 from streamlit_folium import st_folium
 import folium
@@ -36,26 +11,20 @@ from uuid import uuid4
 import re
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
-
-# -----------------------------------------------------------------------------
 # APP CONFIG
-# -----------------------------------------------------------------------------
 st.set_page_config(page_title="Food Donation App", page_icon="🍲", layout="centered")
-
-# -----------------------------------------------------------------------------
 # CONSTANTS / FILES
-# -----------------------------------------------------------------------------
 DATA_FILE = "donations.json"
 USERS_FILE = "users.json"
+FEEDBACK_FILE = "feedback.json"   # <--- new file
 NEARBY_RADIUS_KM = 10  # show donors within this radius of the collector (km)
-
 # Notification event labels
 DONOR_EVENTS = ("accepted", "picked_up", "cancelled")
 COLLECTOR_EVENTS = ("assigned", "unassigned")  # future-reserved (not shown now)
-
-# -----------------------------------------------------------------------------
+FEEDBACK_MIN_LEN = 0
+FEEDBACK_MAX_LEN = 2000
+FEEDBACK_ALLOWED_RATINGS = [1, 2, 3, 4, 5]
 # HELPERS: TIME, HASH, LINKS
-# -----------------------------------------------------------------------------
 def now_ts() -> int:
     return int(time.time())
 
@@ -74,8 +43,19 @@ def hash_password(password: str) -> str:
 
 def gmaps_dir_link(lat: float, lon: float) -> str:
     return f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}"
-
-# -----------------------------------------------------------------------------
+def short_id(prefix: str = "") -> str:
+    """Generate a short-ish unique id with optional prefix."""
+    return f"{prefix}{int(time.time()*1_000)}_{uuid4().hex[:8]}"
+def sanitize_feedback_text(text: str) -> str:
+    """
+    Simple normalization for feedback text:
+      - strip leading/trailing whitespace
+      - collapse long runs of whitespace
+      - cap maximum length
+    """
+    text = (text or "").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text[:FEEDBACK_MAX_LEN]
 # STORAGE: LOAD / SAVE
 # -----------------------------------------------------------------------------
 def load_json(path: str, default):
@@ -180,35 +160,97 @@ def load_users() -> Dict[str, Any]:
 def save_users(users: Dict[str, Any]):
     save_json(USERS_FILE, users)
 
-# -----------------------------------------------------------------------------
-# SESSION STATE INIT
-# -----------------------------------------------------------------------------
+def load_feedback() -> List[Dict[str, Any]]:
+    """
+    Load feedback entries with structure (list of dicts):
+    {
+        "id": "fb_...",
+        "role": "donor" | "collector",
+        "user_phone": "##########",
+        "user_name": "Alice",
+        "anonymous": bool,
+        "rating": int | None,
+        "text": "message",
+        "created_at": int (ts),
+        "context": {
+            "donation_id": "...",     # optional
+            "status_snapshot": "...",  # optional
+        }
+    }
+    """
+    feedback = load_json(FEEDBACK_FILE, [])
+    changed = False
+
+    # normalize legacy or malformed entries
+    normed: List[Dict[str, Any]] = []
+    for entry in feedback:
+        e = dict(entry) if isinstance(entry, dict) else {}
+        if not e.get("id"):
+            e["id"] = short_id("fb_")
+            changed = True
+        # role normalization
+        role = e.get("role")
+        if role not in ("donor", "collector"):
+            # best effort: default unknown role to "donor"
+            e["role"] = "donor"
+            changed = True
+        # rating normalization
+        if e.get("rating") not in FEEDBACK_ALLOWED_RATINGS:
+            # allow None for unrated
+            if e.get("rating") is None:
+                pass
+            else:
+                e["rating"] = None
+                changed = True
+        # text normalization
+        e["text"] = sanitize_feedback_text(e.get("text", ""))
+
+        # context normalization
+        ctx = e.get("context")
+        if not isinstance(ctx, dict):
+            e["context"] = {}
+            changed = True
+
+        # anonymous boolean
+        e["anonymous"] = bool(e.get("anonymous", False))
+
+        # created_at
+        if not e.get("created_at"):
+            e["created_at"] = now_ts()
+            changed = True
+
+        normed.append(e)
+
+    if changed:
+        save_json(FEEDBACK_FILE, normed)
+        return normed
+    return feedback
+
+
+def save_feedback(feedback_list: List[Dict[str, Any]]):
+    """Persist all feedback entries."""
+    save_json(FEEDBACK_FILE, feedback_list)
+# SESSION STATE INIT                                                           #
 if "donations" not in st.session_state:
     st.session_state.donations = load_donations()
-
 if "users" not in st.session_state:
     st.session_state.users = load_users()
-
+if "feedback" not in st.session_state:
+    st.session_state.feedback = load_feedback()
 if "page" not in st.session_state:
     st.session_state.page = "login"
-
 if "user" not in st.session_state:
     st.session_state.user = None  # {"name":..., "phone":..., "email":...}
-
 if "collector_coords" not in st.session_state:
     st.session_state.collector_coords = None  # (lat, lon, label)
-
-# -----------------------------------------------------------------------------
-# GLOBALS
-# -----------------------------------------------------------------------------
+# GLOBALS & UPDATE SHORTCUTS                                                   #
 geolocator = Nominatim(user_agent="food_is_hope")
-
 def update_donations():
     save_donations(st.session_state.donations)
-
 def update_users():
     save_users(st.session_state.users)
-
+def update_feedback():
+    save_feedback(st.session_state.feedback)
 # -----------------------------------------------------------------------------
 # NOTIFICATION "SEEN" HELPERS
 # -----------------------------------------------------------------------------
@@ -248,6 +290,87 @@ def clear_seen_for_donation(phone: str, role_bucket: str, donation_id: str):
     if "seen" in users[phone] and role_bucket in users[phone]["seen"]:
         users[phone]["seen"][role_bucket].pop(donation_id, None)
         update_users()
+# FEEDBACK HELPERS                                                             #
+def build_feedback_entry(
+    role: str,
+    user_phone: str,
+    user_name: str,
+    text: str,
+    rating: Optional[int],
+    anonymous: bool,
+    donation_id: Optional[str] = None,
+    status_snapshot: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Construct a normalized feedback entry dict.
+    The platform does not reply to feedback (non-intrusive logging only).
+    """
+    text = sanitize_feedback_text(text)
+    rating_norm = rating if rating in FEEDBACK_ALLOWED_RATINGS else None
+
+    entry = {
+        "id": short_id("fb_"),
+        "role": "collector" if role == "collector" else "donor",
+        "user_phone": str(user_phone or "").strip(),
+        "user_name": (user_name or "").strip(),
+        "anonymous": bool(anonymous),
+        "rating": rating_norm,
+        "text": text,
+        "created_at": now_ts(),
+        "context": {},
+    }
+    if donation_id:
+        entry["context"]["donation_id"] = donation_id
+    if status_snapshot:
+        entry["context"]["status_snapshot"] = status_snapshot
+    return entry
+
+
+def append_feedback(entry: Dict[str, Any]) -> None:
+    """Append one feedback entry to session and persist."""
+    st.session_state.feedback.append(entry)
+    update_feedback()
+
+
+def my_feedback_history(role: str, my_phone: str) -> List[Dict[str, Any]]:
+    """Return feedback authored by the current user for a given role."""
+    out = []
+    for f in st.session_state.feedback:
+        if f.get("role") == role and f.get("user_phone") == my_phone:
+            out.append(f)
+    out.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
+    return out
+
+
+def community_feedback_recent(limit: int = 25) -> List[Dict[str, Any]]:
+    """
+    Return most recent feedback entries across roles.
+    The display anonymizes (respects the 'anonymous' flag) and excludes
+    sensitive details (we only show role, rating, excerpt, and time).
+    """
+    items = list(st.session_state.feedback)
+    items.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
+    return items[:limit]
+
+
+def feedback_role_badge(role: str) -> str:
+    """Pretty label for role."""
+    return "🍎 Donor" if role == "donor" else "🚚 Collector"
+
+
+def feedback_rating_stars(rating: Optional[int]) -> str:
+    """Return a simple star string for rating (1–5), or '—' if missing."""
+    if rating in FEEDBACK_ALLOWED_RATINGS:
+        return "★" * rating + "☆" * (5 - rating)
+    return "—"
+
+
+def feedback_excerpt(text: str, width: int = 160) -> str:
+    """Short excerpt for community wall."""
+    t = (text or "").strip()
+    if len(t) <= width:
+        return t
+    return t[: width - 1] + "…"        
 
 # -----------------------------------------------------------------------------
 # AUTH / LOGIN PAGE (single form)
@@ -347,7 +470,92 @@ def role_select_page():
         st.session_state.user = None
         st.session_state.collector_coords = None
         st.rerun()
+# -----------------------------------------------------------------------------#
+# SHARED FEEDBACK UI (used inside donor & collector pages)                     #
+# -----------------------------------------------------------------------------#
+def feedback_widget(role: str, possible_donation_id: Optional[str] = None, status_snapshot: Optional[str] = None):
+    """
+    Render a compact feedback form for the given role, to be embedded in
+    donor_page() and collector_page(). The platform does not reply to feedback.
+    """
+    user = st.session_state.user
+    my_phone = user["phone"]
+    my_name = user["name"]
+    block_key = f"feedback_block_{role}_{possible_donation_id or 'none'}"
 
+    st.write("---")
+    st.subheader("📝 Share Feedback (optional)")
+    st.caption("We appreciate your thoughts. This is anonymous if you choose, and we don’t reply individually.")
+
+    with st.form(f"form_feedback_{block_key}"):
+        txt = st.text_area(
+            "Your feedback",
+            help="Share anything about your experience. (Min 5 characters)",
+            key=f"txt_feedback_{block_key}",
+            height=120,
+        )
+        colA, colB = st.columns(2)
+        with colA:
+            rating = st.selectbox(
+                "Rating (optional)",
+                options=["— (no rating)"] + [str(r) for r in FEEDBACK_ALLOWED_RATINGS],
+                index=0,
+                key=f"rating_select_{block_key}",
+                help="Leave as '—' if you prefer not to rate.",
+            )
+        with colB:
+            anonymous = st.checkbox(
+                "Submit anonymously",
+                value=False,
+                key=f"chk_anonymous_{block_key}",
+                help="If checked, your name and phone will not be shown on the community wall.",
+            )
+
+        submit_label = "Submit Feedback"
+        submitted = st.form_submit_button(submit_label, use_container_width=True)
+
+    if submitted:
+        normalized_text = sanitize_feedback_text(txt)
+        if len(normalized_text) < FEEDBACK_MIN_LEN:
+            st.error(f"Please enter at least {FEEDBACK_MIN_LEN} characters of feedback.")
+            return
+
+        rating_val: Optional[int] = None
+        if rating != "— (no rating)":
+            try:
+                rating_val_int = int(rating)
+                if rating_val_int in FEEDBACK_ALLOWED_RATINGS:
+                    rating_val = rating_val_int
+            except Exception:
+                rating_val = None
+
+        entry = build_feedback_entry(
+            role=role,
+            user_phone=my_phone,
+            user_name=my_name,
+            text=normalized_text,
+            rating=rating_val,
+            anonymous=anonymous,
+            donation_id=possible_donation_id,
+            status_snapshot=status_snapshot,
+        )
+        append_feedback(entry)
+        st.success("✅ Feedback submitted. Thank you!")
+        st.rerun()
+
+    # Your feedback history (for this role)
+    history = my_feedback_history(role, my_phone)
+    with st.expander("📜 My Feedback History (this role)"):
+        if not history:
+            st.info("You haven’t submitted any feedback yet for this role.")
+        else:
+            for i, f in enumerate(history, start=1):
+                st.markdown(
+                    f"- *{fmt_time(f.get('created_at'))}* • "
+                    f"Role: {feedback_role_badge(f.get('role','donor'))} • "
+                    f"Rating: {feedback_rating_stars(f.get('rating'))}\n\n"
+                    f"  {f.get('text','')}"
+                )
 # -----------------------------------------------------------------------------
 # DONOR PAGE
 # -----------------------------------------------------------------------------
@@ -376,8 +584,8 @@ def donor_page():
 
             if not is_event_seen:
                 st.info(
-                    f"Your donation *{d.get('food','?')}* ({d.get('quantity','?')}) at *{d.get('location','?')}* "
-                    f"was *accepted* by *{cname}* (📞 {cphone}) at {when}."
+                    f"Your donation {d.get('food','?')} ({d.get('quantity','?')}) at {d.get('location','?')} "
+                    f"was accepted by {cname} (📞 {cphone}) at {when}."
                 )
                 if st.button("Mark as seen", key=seen_key):
                     mark_seen(phone, "donor", did, "accepted")
@@ -407,8 +615,8 @@ def donor_page():
 
             if not is_event_seen:
                 st.success(
-                    f"Your donation *{d.get('food','?')}* ({d.get('quantity','?')}) at *{d.get('location','?')}* "
-                    f"was *picked up* by *{cname}* at {when}!"
+                    f"Your donation {d.get('food','?')} ({d.get('quantity','?')}) at {d.get('location','?')} "
+                    f"was picked up by {cname} at {when}!"
                 )
                 if st.button("Mark as seen", key=seen_key):
                     mark_seen(phone, "donor", did, "picked_up")
@@ -494,7 +702,7 @@ def donor_page():
         availability = st.text_input("📅 Available Until (e.g. 'Tonight 9 PM')")
         location_name = st.text_input("📍 Enter Your Location (required, e.g., 'MG Road, Bangalore')")
 
-        st.markdown("**📍 Recommended:** First type a specific address/landmark; the map will center there. Then click the exact pickup spot on the map to fine-tune.")
+        st.markdown("📍 Recommended:** First type a specific address/landmark; the map will center there. Then click the exact pickup spot on the map to fine-tune.")
         st.markdown("If you leave the map un-clicked, we'll use the geocoded location as the pickup point (if geocoding succeeded).")
 
         # Determine map center: try geocoding the typed location for a nicer initial view.
@@ -627,9 +835,9 @@ def donor_page():
                 picked_at = fmt_time(d.get("picked_up_at"))
                 cancelled_at = fmt_time(d.get("cancelled_at"))
                 st.markdown(
-                    f"- **{d.get('food','?')}** • **{d.get('quantity','?')}** • 📍 {d.get('location','?')} • "
+                    f"- *{d.get('food','?')}* • *{d.get('quantity','?')}* • 📍 {d.get('location','?')} • "
                     f"🕒 Created: {fmt_time(d.get('created_at'))} • "
-                    f"🏷 Status: `{status}`"
+                    f"🏷 Status: {status}"
                     + (f" • 🤝 Accepted: {accepted_at}" if d.get("accepted_at") else "")
                     + (f" • ✅ Picked Up: {picked_at}" if d.get("picked_up_at") else "")
                     + (f" • ❌ Cancelled: {cancelled_at}" if d.get("cancelled_at") else "")
@@ -640,7 +848,14 @@ def donor_page():
     if st.button("⬅ Back"):
         st.session_state.page = "role_select"
         st.rerun()
+# ---------------------------
+    # FEEDBACK (DONOR)
+    # ---------------------------
+    feedback_widget(role="donor")
 
+    if st.button("⬅ Back", key="btn_back_donor"):
+        st.session_state.page = "role_select"
+        st.rerun()
 # -----------------------------------------------------------------------------
 # COLLECTOR PAGE
 # -----------------------------------------------------------------------------
@@ -830,7 +1045,7 @@ def collector_page():
             if d.get("status") == "picked_up" and d.get("collector_phone") == me_phone
         ]
 
-        st.markdown("**🤝 Accepted by Me (Pending Pickup)**")
+        st.markdown("🤝 Accepted by Me (Pending Pickup)")
         if accepted_by_me:
             for d in sorted(accepted_by_me, key=lambda x: x.get("accepted_at") or 0, reverse=True):
                 row = st.container()
@@ -863,7 +1078,7 @@ def collector_page():
         else:
             st.write("No pending pickups accepted by you.")
 
-        st.markdown("**✅ Picked Up by Me**")
+        st.markdown("✅ Picked Up by Me**")
         if picked_by_me:
             for d in sorted(picked_by_me, key=lambda x: x.get("picked_up_at") or 0, reverse=True):
                 st.success(
@@ -876,7 +1091,14 @@ def collector_page():
     if st.button("⬅ Back"):
         st.session_state.page = "role_select"
         st.rerun()
+# ---------------------------
+    # FEEDBACK (COLLECTOR)
+    # ---------------------------
+    feedback_widget(role="collector")
 
+    if st.button("⬅ Back", key="btn_back_collector"):
+        st.session_state.page = "role_select"
+        st.rerun()
 # -----------------------------------------------------------------------------
 # COMMUNITY PAGE (placeholder)
 # -----------------------------------------------------------------------------
@@ -902,6 +1124,8 @@ def main_router():
         collector_page()
     elif page == "community_page":
         community_page()
+    #elif page == "my_feedback_page":
+        #my_feedback_page()    
     else:
         st.session_state.page = "login"
         st.rerun()
@@ -911,3 +1135,4 @@ def main_router():
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     main_router()
+
