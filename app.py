@@ -1183,6 +1183,7 @@ def collector_page():
 # COMMUNITY PAGE (placeholder)
 # -----------------------------------------------------------------------------
 
+
 def community_page():
     st.header("🤝 Community Dashboard")
     st.write("Here the community can view resources and events.")
@@ -1200,38 +1201,38 @@ def community_page():
     uploaded_image = st.file_uploader("Upload an image", type=["png", "jpg", "jpeg"])
     caption = st.text_input("📝 Add a caption for your photo")
 
-    # Save and display image
+    metadata_path = "image_metadata.json"
+
     if uploaded_image is not None and caption:
         image = Image.open(uploaded_image)
         save_path = os.path.join(save_dir, uploaded_image.name)
         image.save(save_path)
 
-        # Save caption to metadata
-        metadata_path = "image_metadata.json"
+        # Load existing metadata or initialize
         if os.path.exists(metadata_path):
             try:
                 with open(metadata_path, "r") as f:
                     metadata = json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
+            except json.JSONDecodeError:
                 metadata = {}
         else:
             metadata = {}
 
+        # Save new entry
         metadata[uploaded_image.name] = caption
         with open(metadata_path, "w") as f:
-            json.dump(metadata, f)
+            json.dump(metadata, f, indent=2)
 
         st.success("✅ Image and caption uploaded successfully!")
         st.image(image, caption=caption, use_container_width=True)
 
     # Display gallery
     st.subheader("🌟 Community Gallery")
-    metadata_path = "image_metadata.json"
     if os.path.exists(metadata_path):
         try:
             with open(metadata_path, "r") as f:
                 metadata = json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError):
+        except json.JSONDecodeError:
             metadata = {}
     else:
         metadata = {}
@@ -1241,6 +1242,8 @@ def community_page():
         filename = os.path.basename(img_path)
         caption = metadata.get(filename, "No caption provided")
         st.image(img_path, caption=caption, use_container_width=True)
+
+
 
 # ---------------- Admin Panel ----------------
 
@@ -1297,3 +1300,4 @@ def main_router():
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     main_router()
+
