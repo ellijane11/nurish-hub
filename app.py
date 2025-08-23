@@ -11,12 +11,20 @@ from uuid import uuid4
 import re
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
+def generate_form_key(prefix, donor):
+    return f"{prefix}{donor['phone']}{donor.get('name', '')}_{donor.get('id', '')}"
+def generate_form_key(prefix, user):
+    return f"{prefix}{user['phone']}{user.get('name', '')}_{user.get('id', '')}"
+
 # APP CONFIG
 st.set_page_config(page_title="Food Donation App", page_icon="🍲", layout="centered")
 # CONSTANTS / FILES
 DATA_FILE = "donations.json"
 USERS_FILE = "users.json"
 FEEDBACK_FILE = "feedback.json"   # <--- new file
+REPORTS_FILE = "reports.json"
+BLOCKED_FILE = "blocked_users.json"
+
 NEARBY_RADIUS_KM = 10  # show donors within this radius of the collector (km)
 # Notification event labels
 DONOR_EVENTS = ("accepted", "picked_up", "cancelled")
@@ -230,6 +238,27 @@ def load_feedback() -> List[Dict[str, Any]]:
 def save_feedback(feedback_list: List[Dict[str, Any]]):
     """Persist all feedback entries."""
     save_json(FEEDBACK_FILE, feedback_list)
+def load_reports() -> List[Dict[str, Any]]:
+    return load_json(REPORTS_FILE, [])
+
+def save_reports(reports: List[Dict[str, Any]]):
+    save_json(REPORTS_FILE, reports)
+
+def load_blocked_users() -> List[str]:
+    return load_json(BLOCKED_FILE, [])
+
+def save_blocked_users(blocked: List[str]):
+    save_json(BLOCKED_FILE, blocked)
+
+def is_blocked(phone: str) -> bool:
+    return phone in load_blocked_users()
+
+def block_user(phone: str):
+    blocked = load_blocked_users()
+    if phone not in blocked:
+        blocked.append(phone)
+        save_blocked_users(blocked)
+
 # SESSION STATE INIT                                                           #
 if "donations" not in st.session_state:
     st.session_state.donations = load_donations()
@@ -243,6 +272,11 @@ if "user" not in st.session_state:
     st.session_state.user = None  # {"name":..., "phone":..., "email":...}
 if "collector_coords" not in st.session_state:
     st.session_state.collector_coords = None  # (lat, lon, label)
+if "reports" not in st.session_state:
+    st.session_state.reports = load_reports()
+if "blocked_users" not in st.session_state:
+    st.session_state.blocked_users = load_blocked_users()
+
 # GLOBALS & UPDATE SHORTCUTS                                                   #
 geolocator = Nominatim(user_agent="food_is_hope")
 def update_donations():
@@ -251,6 +285,12 @@ def update_users():
     save_users(st.session_state.users)
 def update_feedback():
     save_feedback(st.session_state.feedback)
+def update_reports():
+    save_reports(st.session_state.reports)
+
+def update_blocked_users():
+    save_blocked_users(st.session_state.blocked_users)
+
 # -----------------------------------------------------------------------------
 # NOTIFICATION "SEEN" HELPERS
 # -----------------------------------------------------------------------------
@@ -394,6 +434,9 @@ def login_page():
                 st.success("✅ Valid Gmail address")
             else:
                 st.warning("⚠ Please enter a valid Gmail address (like example@gmail.com)")
+        if is_blocked(phone):
+            st.error("🚫 This account has been blocked due to safety concerns.")
+            return
 
         submitted = st.form_submit_button("Login / Register")
 
@@ -464,6 +507,12 @@ def role_select_page():
         if st.button("🤝 Community", use_container_width=True):
             st.session_state.page = "community_page"
             st.rerun()
+    # Admin Panel Access (only for admin)
+    if st.session_state.user["phone"] == "8891867973":
+      if st.button("🛡 Admin Panel"):
+        st.session_state.page = "admin_panel"
+        st.rerun()
+
 
     if st.button("Logout"):
         st.session_state.page = "login"
@@ -551,7 +600,7 @@ def feedback_widget(role: str, possible_donation_id: Optional[str] = None, statu
         else:
             for i, f in enumerate(history, start=1):
                 st.markdown(
-                    f"- *{fmt_time(f.get('created_at'))}* • "
+                    f"- {fmt_time(f.get('created_at'))} • "
                     f"Role: {feedback_role_badge(f.get('role','donor'))} • "
                     f"Rating: {feedback_rating_stars(f.get('rating'))}\n\n"
                     f"  {f.get('text','')}"
@@ -561,17 +610,28 @@ def feedback_widget(role: str, possible_donation_id: Optional[str] = None, statu
 # -----------------------------------------------------------------------------
 def donor_page():
     st.header("🍎 Donor Dashboard")
+    st.markdown("""
+✨ Pack the food with love — clean, sealed, and ready to share.<br>
+📅 Add a note with the date and time it was prepared, if you can.<br>
+🍲 Share only fresh, hygienic meals to spread health and happiness.
+""", unsafe_allow_html=True)
+    # -------------------------------------------------------------------------
+    # Load Blocked Users and Filter Visible Donations
+    # -------------------------------------------------------------------------
+    blocked = load_blocked_users()
+    visible_donations = [d for d in st.session_state.donations if d["phone"] not in blocked]
 
     phone = st.session_state.user["phone"]
-    my_donations = [d for d in st.session_state.donations if d.get("phone") == phone]
+    my_donations = [d for d in visible_donations if d.get("phone") == phone]
+
     accepted = [d for d in my_donations if d.get("status") == "accepted"]
     picked_up = [d for d in my_donations if d.get("status") == "picked_up"]
     active_donations = [d for d in my_donations if d.get("status", "active") == "active"]
     cancelled = [d for d in my_donations if d.get("status") == "cancelled"]
 
-    # ---------------------------
+    # -------------------------------------------------------------------------
     # Notifications — ACCEPTED
-    # ---------------------------
+    # -------------------------------------------------------------------------
     if accepted:
         st.subheader("🤝 Accepted by Collector")
         for idx, d in enumerate(sorted(accepted, key=lambda x: x.get("accepted_at") or 0, reverse=True)):
@@ -594,16 +654,15 @@ def donor_page():
                 with st.expander(f"Seen: {d.get('food','?')} accepted by {cname} at {when}"):
                     st.write("You have marked this notification as seen.")
                     if st.button("Unhide (show again)", key=f"unsee_accept_{did}_{idx}"):
-                        # Just clear this single 'accepted' flag
                         users = st.session_state.users
                         users[phone]["seen"]["donor"].setdefault(did, {})
                         users[phone]["seen"]["donor"][did].pop("accepted", None)
                         update_users()
                         st.rerun()
 
-    # ---------------------------
+    # -------------------------------------------------------------------------
     # Notifications — PICKED UP
-    # ---------------------------
+    # -------------------------------------------------------------------------
     if picked_up:
         st.subheader("✅ Picked Up")
         for idx, d in enumerate(sorted(picked_up, key=lambda x: x.get("picked_up_at") or 0, reverse=True)):
@@ -631,9 +690,9 @@ def donor_page():
                         update_users()
                         st.rerun()
 
-    # ---------------------------
+    # -------------------------------------------------------------------------
     # ACTIVE DONATIONS
-    # ---------------------------
+    # -------------------------------------------------------------------------
     if active_donations:
         st.subheader("Your Active Donations")
         for idx, d in enumerate(sorted(active_donations, key=lambda x: x.get("created_at") or 0, reverse=True)):
@@ -643,12 +702,10 @@ def donor_page():
             )
             col1, col2 = st.columns(2)
             with col1:
-                # Robust unique key to avoid duplicate
                 if st.button(
                     f"❌ Cancel '{d.get('food','item')}'",
                     key=f"cancel_{d.get('id','noid')}_{idx}"
                 ):
-                    # Mark as cancelled (do not delete to preserve history)
                     for dd in st.session_state.donations:
                         if dd["id"] == d["id"]:
                             dd["status"] = "cancelled"
@@ -658,15 +715,14 @@ def donor_page():
             with col2:
                 st.write("")
 
-    # ---------------------------
+    # -------------------------------------------------------------------------
     # CANCELLED DONATIONS
-    # ---------------------------
+    # -------------------------------------------------------------------------
     if cancelled:
         st.subheader("🗂 Cancelled Donations")
         for idx, d in enumerate(sorted(cancelled, key=lambda x: x.get("cancelled_at") or x.get("created_at") or 0, reverse=True)):
             when = fmt_time(d.get("cancelled_at"))
             did = d["id"]
-            # Optional donor 'cancelled' notification seen flag
             if not is_seen(phone, "donor", did, "cancelled"):
                 st.warning(
                     f"Cancelled: {d.get('food','?')} • {d.get('quantity','?')} • {d.get('location','?')} • "
@@ -685,42 +741,31 @@ def donor_page():
                         update_users()
                         st.rerun()
 
-    # ---------------------------
-    # ADD NEW DONATION (UPDATED: address-first + map-click adjust + quantity)
-    # ---------------------------
+    # -------------------------------------------------------------------------
+    # ADD NEW DONATION
+    # -------------------------------------------------------------------------
     st.write("---")
     st.subheader("Add a New Donation")
 
-    # We'll display a little two-step UX in the same form:
-    # 1) User types address (location_name). We attempt to geocode it to center the map.
-    # 2) Map is shown centered on geocoded point (or fallback). Donor clicks to fine-tune.
-    # 3) On Save, we prioritize clicked coordinates, otherwise use geocoded coords.
-
     with st.form("donor_form_main"):
         food_item = st.text_input("🍲 Food Item")
-        quantity_text = st.text_input("📦 Quantity (e.g. '10 meals', '5 kg rice', '20 boxes')")  # NEW FIELD
+        quantity_text = st.text_input("📦 Quantity (e.g. '10 meals', '5 kg rice', '20 boxes')")
         availability = st.text_input("📅 Available Until (e.g. 'Tonight 9 PM')")
         location_name = st.text_input("📍 Enter Your Location (required, e.g., 'MG Road, Bangalore')")
 
-        st.markdown("📍 Recommended:** First type a specific address/landmark; the map will center there. Then click the exact pickup spot on the map to fine-tune.")
-        st.markdown("If you leave the map un-clicked, we'll use the geocoded location as the pickup point (if geocoding succeeded).")
+        st.markdown("📍 Recommended: First type a specific address/landmark; the map will center there. Then click the exact pickup spot on the map to fine-tune.")
 
-        # Determine map center: try geocoding the typed location for a nicer initial view.
-        # We compute this inside the form so the user sees the centered map while the form is open.
-        default_center = [12.9716, 77.5946]  # Bangalore fallback
+        default_center = [12.9716, 77.5946]
         map_center = default_center
         geocoded_lat = None
         geocoded_lon = None
-        geocoded_address_display = None
 
         try:
             if location_name and location_name.strip():
-                # Try geocoding with appended country to improve accuracy
                 safe_query = location_name.strip()
                 try:
                     geocoded = geolocator.geocode(safe_query + ", India")
                 except Exception:
-                    # if the above fails (rate limit or other), try plain query
                     geocoded = None
                     try:
                         geocoded = geolocator.geocode(safe_query)
@@ -730,69 +775,41 @@ def donor_page():
                 if geocoded:
                     geocoded_lat = geocoded.latitude
                     geocoded_lon = geocoded.longitude
-                    geocoded_address_display = getattr(geocoded, "address", None)
                     map_center = [geocoded_lat, geocoded_lon]
         except Exception:
-            # ignore geocode errors here; we'll try again on submit
             map_center = default_center
-            geocoded_lat = None
-            geocoded_lon = None
 
-        # Build the map centered at map_center, show a suggested marker when geocoded is available.
         zoom_level = 14 if map_center != default_center else 5
         m = folium.Map(location=map_center, zoom_start=zoom_level)
 
         if geocoded_lat and geocoded_lon:
-            # add a suggested marker
-            folium.Marker(
-                [geocoded_lat, geocoded_lon],
-                tooltip="Suggested location (from address). Click the map to fine-tune.",
-                popup=geocoded_address_display or location_name
-            ).add_to(m)
+            folium.Marker([geocoded_lat, geocoded_lon], tooltip="Suggested location").add_to(m)
 
-        st.write("(Click once on the map to set the final pickup point. If you click, the pin will use the clicked coordinates.)")
         map_data = st_folium(m, height=380, width=700)
-
         submitted = st.form_submit_button("Save Donation")
 
-    # Handle submit outside the form block
     if submitted:
         if not (food_item and quantity_text and availability and location_name):
-            st.error("⚠ Please fill all required fields (food item, quantity, availability, and location text or use the map click).")
+            st.error("⚠ Please fill all required fields.")
         else:
-            chosen_lat = None
-            chosen_lon = None
-
-            # 1) Priority: use last map click if present
+            chosen_lat, chosen_lon = None, None
             try:
                 if map_data and map_data.get("last_clicked"):
                     chosen_lat = map_data["last_clicked"]["lat"]
                     chosen_lon = map_data["last_clicked"]["lng"]
             except Exception:
-                chosen_lat = None
-                chosen_lon = None
+                pass
 
-            # 2) Fallback: use geocoded coords we computed earlier (or re-run geocode if needed)
             if chosen_lat is None:
-                # attempt geocode again robustly (in case earlier attempt was skipped)
                 try:
                     loc = geolocator.geocode(location_name.strip() + ", India")
                     if loc:
-                        chosen_lat = loc.latitude
-                        chosen_lon = loc.longitude
+                        chosen_lat, chosen_lon = loc.latitude, loc.longitude
                 except Exception:
-                    # last resort: try without appending country
-                    try:
-                        loc = geolocator.geocode(location_name.strip())
-                        if loc:
-                            chosen_lat = loc.latitude
-                            chosen_lon = loc.longitude
-                    except Exception:
-                        chosen_lat = None
-                        chosen_lon = None
+                    pass
 
             if chosen_lat is None or chosen_lon is None:
-                st.error("⚠ Could not determine exact location. Please click a point on the map or provide a more specific address.")
+                st.error("⚠ Could not determine exact location.")
             else:
                 try:
                     unique_id = f"{phone}{int(time.time()*1_000_000)}{uuid4().hex[:6]}"
@@ -818,14 +835,14 @@ def donor_page():
 
                     st.session_state.donations.append(new_donation)
                     update_donations()
-                    st.success("🎉 Donation saved successfully with exact location!")
+                    st.success("🎉 Donation saved successfully!")
                     st.rerun()
                 except Exception:
-                    st.error("⚠ Error saving donation. Please try again.")
+                    st.error("⚠ Error saving donation.")
 
-    # ---------------------------
+    # -------------------------------------------------------------------------
     # DONATION HISTORY
-    # ---------------------------
+    # -------------------------------------------------------------------------
     st.write("---")
     with st.expander("📜 Donation History (All)"):
         if my_donations:
@@ -835,7 +852,7 @@ def donor_page():
                 picked_at = fmt_time(d.get("picked_up_at"))
                 cancelled_at = fmt_time(d.get("cancelled_at"))
                 st.markdown(
-                    f"- *{d.get('food','?')}* • *{d.get('quantity','?')}* • 📍 {d.get('location','?')} • "
+                    f"- {d.get('food','?')} • {d.get('quantity','?')} • 📍 {d.get('location','?')} • "
                     f"🕒 Created: {fmt_time(d.get('created_at'))} • "
                     f"🏷 Status: {status}"
                     + (f" • 🤝 Accepted: {accepted_at}" if d.get("accepted_at") else "")
@@ -845,23 +862,63 @@ def donor_page():
         else:
             st.info("No donation history yet.")
 
-    if st.button("⬅ Back"):
-        st.session_state.page = "role_select"
-        st.rerun()
-# ---------------------------
-    # FEEDBACK (DONOR)
-    # ---------------------------
-    feedback_widget(role="donor")
+    # -------------------------------------------------------------------------
+    # FEEDBACK
+    # -------------------------------------------------------------------------
+    with st.expander("💬 Feedback"):
+        feedback_widget(role="donor")
+    # -------------------------------------------------------------------------
+    # REPORT A COLLECTOR (Moved to Bottom)
+    # -------------------------------------------------------------------------
+    st.write("---")
+    st.markdown("### 🚨 Report a Collector")
+
+    interacted_collectors = [d for d in st.session_state.get("interactions", []) if d["type"] == "collector"]
+
+    if interacted_collectors:
+        selected_collector = st.selectbox(
+            "Select a collector to report",
+            interacted_collectors,
+            format_func=lambda c: f"{c['name']} ({c['phone']})"
+        )
+
+        form_key = f"report_form_{selected_collector['phone']}{selected_collector.get('name','')}{selected_collector.get('id','')}"
+        with st.form(key=form_key):
+            reason = st.text_input("Reason for report")
+            comment = st.text_area("Additional comments")
+            if st.form_submit_button("Submit Report"):
+                new_report = {
+                    "id": short_id("rep_"),
+                    "reported_phone": selected_collector["phone"],
+                    "reporter_phone": st.session_state.user["phone"],
+                    "reason": reason,
+                    "comment": comment,
+                    "created_at": now_ts(),
+                    "status": "pending"
+                }
+                reports = load_reports()
+                reports.append(new_report)
+                save_reports(reports)
+                st.success(f"✅ Report submitted for {selected_collector['name']}")
+    else:
+        st.info("No past collector interactions found to report.")
 
     if st.button("⬅ Back", key="btn_back_donor"):
         st.session_state.page = "role_select"
         st.rerun()
+
 # -----------------------------------------------------------------------------
 # COLLECTOR PAGE
 # -----------------------------------------------------------------------------
 def collector_page():
     st.header("🚚 Collector Dashboard")
-    st.write("Enter your location to see nearby donors and navigate easily:")
+    st.markdown("""
+🔍 Verify food is properly packed before pickup..<br>
+🚴 Deliver with care and speed so every meal stays fresh and tasty.
+""", unsafe_allow_html=True)
+    
+
+
 
     with st.form("collector_location_form"):
         collector_location = st.text_input("📍 Enter Your Location (required, e.g., 'Indiranagar, Bangalore')")
@@ -979,16 +1036,37 @@ def collector_page():
             status_line += f" (by {cname}, 📞 {cphone})"
 
         st.success(
-            f"👤 Donor: {chosen.get('donor','?')}\n\n"
-            f"- 🍲 Food: {chosen.get('food','?')}\n"
-            f"- 📦 Quantity: {chosen.get('quantity','?')}\n"
-            f"- 📞 Phone: {chosen.get('phone','?')}\n"
-            f"- 📍 Location: {chosen.get('location','?')}\n"
-            f"- ⏳ Available Until: {chosen.get('availability','?')}\n"
-            + (f"- 📏 Distance: {chosen.get('distance_km','?')} km\n" if 'distance_km' in chosen else "")
-            + f"{status_line}\n"
-            + f"- 🗺 Directions: [Open in Google Maps]({link})"
-        )
+           f"👤 Donor: {chosen.get('donor','?')}\n\n"
+           f"- 🍲 Food: {chosen.get('food','?')}\n"
+           f"- 📦 Quantity: {chosen.get('quantity','?')}\n"
+           f"- 📞 Phone: {chosen.get('phone','?')}\n"
+           f"- 📍 Location: {chosen.get('location','?')}\n"
+           f"- ⏳ Available Until: {chosen.get('availability','?')}\n"
+           + (f"- 📏 Distance: {chosen.get('distance_km','?')} km\n" if 'distance_km' in chosen else "")
+           + f"{status_line}\n"
+           + f"- 🗺 Directions: [Open in Google Maps]({link})"
+)
+
+      # 🔔 Add this block right after the donor details
+        with st.expander("🚨 Report This User"):
+          with st.form(f"report_form_{chosen['phone']}"):
+           reason = st.text_input("Reason for report")
+           comment = st.text_area("Additional comments")
+           if st.form_submit_button("Submit Report"):
+              new_report = {
+                "id": short_id("rep_"),
+                "reported_phone": chosen["phone"],
+                "reporter_phone": st.session_state.user["phone"],
+                "reason": reason,
+                "comment": comment,
+                "created_at": now_ts(),
+                "status": "pending"
+              }
+              reports = load_reports()
+              reports.append(new_report)
+              save_reports(reports)
+              st.success("✅ Report submitted.")
+ 
 
         colA, colB, colC = st.columns(3)
         if status == "active":
@@ -1088,13 +1166,12 @@ def collector_page():
         else:
             st.write("No completed pickups yet.")
 
-    if st.button("⬅ Back"):
-        st.session_state.page = "role_select"
-        st.rerun()
+    
 # ---------------------------
     # FEEDBACK (COLLECTOR)
     # ---------------------------
-    feedback_widget(role="collector")
+    with st.expander("FEEDBACK"): 
+     feedback_widget(role="collector")
 
     if st.button("⬅ Back", key="btn_back_collector"):
         st.session_state.page = "role_select"
@@ -1108,6 +1185,29 @@ def community_page():
     if st.button("⬅ Back"):
         st.session_state.page = "role_select"
         st.rerun()
+def admin_panel():
+    st.header("🛡 Admin Panel — Review Reports")
+    reports = load_reports()
+    for r in reports:
+        if r["status"] == "pending":
+            st.warning(f"📱 Reported User: {r['reported_phone']}")
+            st.write(f"📝 Reason: {r['reason']}")
+            st.write(f"💬 Comment: {r['comment']}")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✅ Approve", key=f"approve_{r['id']}"):
+                    r["status"] = "approved"
+                    block_user(r["reported_phone"])
+                    save_reports(reports)
+                    st.success("User blocked.")
+                    st.rerun()
+            with col2:
+                if st.button("❌ Reject", key=f"reject_{r['id']}"):
+                    r["status"] = "rejected"
+                    save_reports(reports)
+                    st.info("Report rejected.")
+                    st.rerun()
+
 
 # -----------------------------------------------------------------------------
 # ROUTER
@@ -1126,6 +1226,9 @@ def main_router():
         community_page()
     #elif page == "my_feedback_page":
         #my_feedback_page()    
+    elif page == "admin_panel":
+        admin_panel()
+
     else:
         st.session_state.page = "login"
         st.rerun()
@@ -1133,6 +1236,5 @@ def main_router():
 # -----------------------------------------------------------------------------
 # ENTRYPOINT
 # -----------------------------------------------------------------------------
-if __name__ == "__main__":
-    main_router()
-
+if __name__== "__main__":
+   main_router()
