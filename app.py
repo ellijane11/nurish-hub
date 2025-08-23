@@ -753,7 +753,7 @@ def donor_page():
     with st.form("donor_form_main"):
         food_item = st.text_input("🍲 Food Item")
         quantity_text = st.text_input("📦 Quantity (e.g. '10 meals', '5 kg rice', '20 boxes')")
-        availability = st.text_input("📅 Available Until (e.g. 'Tonight 9 PM')")
+        availability = st.text_input("📅 Available Until date and time (e.g. '9 PM,22/8/25')")
         location_name = st.text_input("📍 Enter Your Location (required, e.g., 'MG Road, Bangalore')")
 
         st.markdown("📍 Recommended: First type a specific address/landmark; the map will center there. Then click the exact pickup spot on the map to fine-tune.")
@@ -1306,6 +1306,7 @@ def main_router():
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     main_router()
+
 
 
 
