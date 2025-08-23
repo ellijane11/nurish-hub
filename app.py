@@ -1236,6 +1236,8 @@ def community_page():
             metadata = json.load(f)
       except json.JSONDecodeError:
             metadata = {}
+      except (ValueError, FileNotFoundError):
+            metadata = {}
     else:
         metadata = {}
 
@@ -1303,6 +1305,7 @@ def main_router():
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     main_router()
+
 
 
 
