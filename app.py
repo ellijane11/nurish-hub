@@ -11,6 +11,9 @@ from uuid import uuid4
 import re
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
+from PIL import Image
+import glob
+
 def generate_form_key(prefix, donor):
     return f"{prefix}{donor['phone']}{donor.get('name', '')}_{donor.get('id', '')}"
 def generate_form_key(prefix, user):
@@ -865,8 +868,8 @@ def donor_page():
     # -------------------------------------------------------------------------
     # FEEDBACK
     # -------------------------------------------------------------------------
-    with st.expander("💬 Feedback"):
-        feedback_widget(role="donor")
+    feedback_widget(role="donor")
+
     # -------------------------------------------------------------------------
     # REPORT A COLLECTOR (Moved to Bottom)
     # -------------------------------------------------------------------------
@@ -912,13 +915,12 @@ def donor_page():
 # -----------------------------------------------------------------------------
 def collector_page():
     st.header("🚚 Collector Dashboard")
+    
     st.markdown("""
 🔍 Verify food is properly packed before pickup..<br>
 🚴 Deliver with care and speed so every meal stays fresh and tasty.
 """, unsafe_allow_html=True)
     
-
-
 
     with st.form("collector_location_form"):
         collector_location = st.text_input("📍 Enter Your Location (required, e.g., 'Indiranagar, Bangalore')")
@@ -1166,12 +1168,13 @@ def collector_page():
         else:
             st.write("No completed pickups yet.")
 
-    
+    if st.button("⬅ Back"):
+        st.session_state.page = "role_select"
+        st.rerun()
 # ---------------------------
     # FEEDBACK (COLLECTOR)
     # ---------------------------
-    with st.expander("FEEDBACK"): 
-     feedback_widget(role="collector")
+    feedback_widget(role="collector")
 
     if st.button("⬅ Back", key="btn_back_collector"):
         st.session_state.page = "role_select"
@@ -1179,20 +1182,78 @@ def collector_page():
 # -----------------------------------------------------------------------------
 # COMMUNITY PAGE (placeholder)
 # -----------------------------------------------------------------------------
+
 def community_page():
     st.header("🤝 Community Dashboard")
     st.write("Here the community can view resources and events.")
+
     if st.button("⬅ Back"):
         st.session_state.page = "role_select"
         st.rerun()
+
+    # Ensure image directory exists
+    save_dir = "community_images"
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Upload section
+    st.subheader("📸 Share a Photo")
+    uploaded_image = st.file_uploader("Upload an image", type=["png", "jpg", "jpeg"])
+    caption = st.text_input("📝 Add a caption for your photo")
+
+    # Save and display image
+    if uploaded_image is not None and caption:
+        image = Image.open(uploaded_image)
+        save_path = os.path.join(save_dir, uploaded_image.name)
+        image.save(save_path)
+
+        # Save caption to metadata
+        metadata_path = "image_metadata.json"
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, "r") as f:
+                    metadata = json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                metadata = {}
+        else:
+            metadata = {}
+
+        metadata[uploaded_image.name] = caption
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f)
+
+        st.success("✅ Image and caption uploaded successfully!")
+        st.image(image, caption=caption, use_container_width=True)
+
+    # Display gallery
+    st.subheader("🌟 Community Gallery")
+    metadata_path = "image_metadata.json"
+    if os.path.exists(metadata_path):
+        try:
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            metadata = {}
+    else:
+        metadata = {}
+
+    image_files = glob.glob(os.path.join(save_dir, "*"))
+    for img_path in image_files:
+        filename = os.path.basename(img_path)
+        caption = metadata.get(filename, "No caption provided")
+        st.image(img_path, caption=caption, use_container_width=True)
+
+# ---------------- Admin Panel ----------------
+
 def admin_panel():
     st.header("🛡 Admin Panel — Review Reports")
     reports = load_reports()
+
     for r in reports:
         if r["status"] == "pending":
             st.warning(f"📱 Reported User: {r['reported_phone']}")
             st.write(f"📝 Reason: {r['reason']}")
             st.write(f"💬 Comment: {r['comment']}")
+
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("✅ Approve", key=f"approve_{r['id']}"):
@@ -1208,8 +1269,6 @@ def admin_panel():
                     st.info("Report rejected.")
                     st.rerun()
 
-
-# -----------------------------------------------------------------------------
 # ROUTER
 # -----------------------------------------------------------------------------
 def main_router():
@@ -1236,5 +1295,5 @@ def main_router():
 # -----------------------------------------------------------------------------
 # ENTRYPOINT
 # -----------------------------------------------------------------------------
-if __name__== "__main__":
-   main_router()
+if __name__ == "__main__":
+    main_router()
