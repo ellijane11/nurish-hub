@@ -1234,7 +1234,7 @@ def community_page():
       try:
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
-        except json.JSONDecodeError:
+      except json.JSONDecodeError:
             metadata = {}
     else:
         metadata = {}
@@ -1303,5 +1303,6 @@ def main_router():
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     main_router()
+
 
 
