@@ -537,9 +537,9 @@ def feedback_widget(role: str, possible_donation_id: Optional[str] = None, statu
 
     st.write("---")
     with st.expander("📝 Share Feedback (optional)"):
-     st.caption("We appreciate your thoughts. This is anonymous if you choose, and we don’t reply individually.")
+       st.write("We appreciate your thoughts. This is anonymous if you choose, and we don’t reply individually.")
 
-     with st.form(f"form_feedback_{block_key}"):
+       with st.form(f"form_feedback_{block_key}"):
         txt = st.text_area(
             "Your feedback",
             help="Share anything about your experience. (Min 5 characters)",
@@ -614,10 +614,11 @@ def feedback_widget(role: str, possible_donation_id: Optional[str] = None, statu
 def donor_page():
     st.header("🍎 Donor Dashboard")
     st.markdown("""
-✨ Pack the food with love — clean, sealed, and ready to share.<br>
-📅 Add a note with the date and time it was prepared, if you can.<br>
-🍲 Share only fresh, hygienic meals to spread health and happiness.
-""", unsafe_allow_html=True)
+        ✨ Pack the food with love — clean, sealed, and ready to share.<br>
+        📅 Add a note with the date and time it was prepared, if you can.<br>
+        🍲 Share only fresh, hygienic meals to spread health and happiness.
+    """, unsafe_allow_html=True)
+
     # -------------------------------------------------------------------------
     # Load Blocked Users and Filter Visible Donations
     # -------------------------------------------------------------------------
@@ -626,6 +627,24 @@ def donor_page():
 
     phone = st.session_state.user["phone"]
     my_donations = [d for d in visible_donations if d.get("phone") == phone]
+
+    # -------------------------------------------------------------------------
+    # AUTO-CANCEL EXPIRED DONATIONS (with IST timezone handling)
+    # -------------------------------------------------------------------------
+    import pytz
+    from datetime import datetime
+
+    tz = pytz.timezone("Asia/Kolkata")   # Kerala, India timezone
+    now = int(datetime.now(tz).timestamp())
+
+    for d in my_donations:
+        if d.get("status") == "active":
+            expiry_ts = d.get("availability_ts")
+            if expiry_ts and expiry_ts < now:
+                d["status"] = "cancelled"
+                d["cancelled_at"] = now
+                d["cancel_reason"] = "Expired availability"
+                update_donations()
 
     accepted = [d for d in my_donations if d.get("status") == "accepted"]
     picked_up = [d for d in my_donations if d.get("status") == "picked_up"]
@@ -642,6 +661,7 @@ def donor_page():
             cphone = d.get("collector_phone") or "N/A"
             when = fmt_time(d.get("accepted_at"))
             did = d["id"]
+
             seen_key = f"seen_accept_{did}_{idx}"
             is_event_seen = is_seen(phone, "donor", did, "accepted")
 
@@ -653,15 +673,15 @@ def donor_page():
                 if st.button("Mark as seen", key=seen_key):
                     mark_seen(phone, "donor", did, "accepted")
                     st.rerun()
-            else:
-                with st.expander(f"Seen: {d.get('food','?')} accepted by {cname} at {when}"):
-                    st.write("You have marked this notification as seen.")
-                    if st.button("Unhide (show again)", key=f"unsee_accept_{did}_{idx}"):
-                        users = st.session_state.users
-                        users[phone]["seen"]["donor"].setdefault(did, {})
-                        users[phone]["seen"]["donor"][did].pop("accepted", None)
-                        update_users()
-                        st.rerun()
+            # else:
+            #     with st.expander(f"Seen: {d.get('food','?')} accepted by {cname} at {when}"):
+            #         st.write("You have marked this notification as seen.")
+            #         if st.button("Unhide (show again)", key=f"unsee_accept_{did}_{idx}"):
+            #             users = st.session_state.users
+            #             users[phone]["seen"]["donor"].setdefault(did, {})
+            #             users[phone]["seen"]["donor"][did].pop("accepted", None)
+            #             update_users()
+            #             st.rerun()
 
     # -------------------------------------------------------------------------
     # Notifications — PICKED UP
@@ -672,6 +692,7 @@ def donor_page():
             cname = d.get("collector_name") or "Collector"
             when = fmt_time(d.get("picked_up_at"))
             did = d["id"]
+
             is_event_seen = is_seen(phone, "donor", did, "picked_up")
             seen_key = f"seen_pu_{did}_{idx}"
 
@@ -683,15 +704,15 @@ def donor_page():
                 if st.button("Mark as seen", key=seen_key):
                     mark_seen(phone, "donor", did, "picked_up")
                     st.rerun()
-            else:
-                with st.expander(f"Seen: {d.get('food','?')} picked up by {cname} at {when}"):
-                    st.write("You have marked this notification as seen.")
-                    if st.button("Unhide (show again)", key=f"unsee_pu_{did}_{idx}"):
-                        users = st.session_state.users
-                        users[phone]["seen"]["donor"].setdefault(did, {})
-                        users[phone]["seen"]["donor"][did].pop("picked_up", None)
-                        update_users()
-                        st.rerun()
+            # else:
+            #     with st.expander(f"Seen: {d.get('food','?')} picked up by {cname} at {when}"):
+            #         st.write("You have marked this notification as seen.")
+            #         if st.button("Unhide (show again)", key=f"unsee_pu_{did}_{idx}"):
+            #             users = st.session_state.users
+            #             users[phone]["seen"]["donor"].setdefault(did, {})
+            #             users[phone]["seen"]["donor"][did].pop("picked_up", None)
+            #             update_users()
+            #             st.rerun()
 
     # -------------------------------------------------------------------------
     # ACTIVE DONATIONS
@@ -703,16 +724,17 @@ def donor_page():
                 f"🍲 {d.get('food','?')} • {d.get('quantity','?')} | 📍 {d.get('location','?')} | ⏳ {d.get('availability','?')} | "
                 f"🕒 Created: {fmt_time(d.get('created_at'))}"
             )
+
             col1, col2 = st.columns(2)
             with col1:
                 if st.button(
-                    f"❌ Cancel '{d.get('food','item')}'",
-                    key=f"cancel_{d.get('id','noid')}_{idx}"
+                    f"❌ Cancel '{d.get('food','item')}'", key=f"cancel_{d.get('id','noid')}_{idx}"
                 ):
                     for dd in st.session_state.donations:
                         if dd["id"] == d["id"]:
                             dd["status"] = "cancelled"
-                            dd["cancelled_at"] = now_ts()
+                            dd["cancelled_at"] = int(datetime.now(tz).timestamp())
+                            dd["cancel_reason"] = "Manually cancelled by donor"
                     update_donations()
                     st.rerun()
             with col2:
@@ -722,38 +744,39 @@ def donor_page():
     # CANCELLED DONATIONS
     # -------------------------------------------------------------------------
     if cancelled:
-        st.subheader("🗂 Cancelled Donations")
+        
         for idx, d in enumerate(sorted(cancelled, key=lambda x: x.get("cancelled_at") or x.get("created_at") or 0, reverse=True)):
             when = fmt_time(d.get("cancelled_at"))
             did = d["id"]
+            reason = d.get("cancel_reason", "Cancelled")
+
             if not is_seen(phone, "donor", did, "cancelled"):
                 st.warning(
                     f"Cancelled: {d.get('food','?')} • {d.get('quantity','?')} • {d.get('location','?')} • "
-                    f"🕒 Cancelled: {when}"
+                    f"🕒 Cancelled: {when} • Reason: {reason}"
                 )
                 if st.button("Mark as seen", key=f"seen_cancel_{did}_{idx}"):
                     mark_seen(phone, "donor", did, "cancelled")
                     st.rerun()
-            else:
-                with st.expander(f"Seen: Cancelled donation — {d.get('food','?')} at {when}"):
-                    st.write("You have marked this cancellation as seen.")
-                    if st.button("Unhide (show again)", key=f"unsee_cancel_{did}_{idx}"):
-                        users = st.session_state.users
-                        users[phone]["seen"]["donor"].setdefault(did, {})
-                        users[phone]["seen"]["donor"][did].pop("cancelled", None)
-                        update_users()
-                        st.rerun()
+            # else:
+            #     with st.expander(f"Seen: Cancelled donation — {d.get('food','?')} at {when}"):
+            #         st.write("You have marked this cancellation as seen.")
+            #         if st.button("Unhide (show again)", key=f"unsee_cancel_{did}_{idx}"):
+            #             users = st.session_state.users
+            #             users[phone]["seen"]["donor"].setdefault(did, {})
+            #             users[phone]["seen"]["donor"][did].pop("cancelled", None)
+            #             update_users()
+            #             st.rerun()
 
     # -------------------------------------------------------------------------
     # ADD NEW DONATION
     # -------------------------------------------------------------------------
     st.write("---")
     st.subheader("Add a New Donation")
-
     with st.form("donor_form_main"):
         food_item = st.text_input("🍲 Food Item")
         quantity_text = st.text_input("📦 Quantity (e.g. '10 meals', '5 kg rice', '20 boxes')")
-        availability = st.text_input("📅 Available Until date and time (e.g. '9 PM,22/8/25')")
+        availability = st.text_input("📅 Available Until (format: YYYY-MM-DD HH:MM)")
         location_name = st.text_input("📍 Enter Your Location (required, e.g., 'MG Road, Bangalore')")
 
         st.markdown("📍 Recommended: First type a specific address/landmark; the map will center there. Then click the exact pickup spot on the map to fine-tune.")
@@ -770,11 +793,10 @@ def donor_page():
                     geocoded = geolocator.geocode(safe_query + ", India")
                 except Exception:
                     geocoded = None
-                    try:
-                        geocoded = geolocator.geocode(safe_query)
-                    except Exception:
-                        geocoded = None
-
+                try:
+                    geocoded = geolocator.geocode(safe_query)
+                except Exception:
+                    geocoded = None
                 if geocoded:
                     geocoded_lat = geocoded.latitude
                     geocoded_lon = geocoded.longitude
@@ -789,59 +811,69 @@ def donor_page():
             folium.Marker([geocoded_lat, geocoded_lon], tooltip="Suggested location").add_to(m)
 
         map_data = st_folium(m, height=380, width=700)
+
         submitted = st.form_submit_button("Save Donation")
-
-    if submitted:
-        if not (food_item and quantity_text and availability and location_name):
-            st.error("⚠ Please fill all required fields.")
-        else:
-            chosen_lat, chosen_lon = None, None
-            try:
-                if map_data and map_data.get("last_clicked"):
-                    chosen_lat = map_data["last_clicked"]["lat"]
-                    chosen_lon = map_data["last_clicked"]["lng"]
-            except Exception:
-                pass
-
-            if chosen_lat is None:
+        if submitted:
+            if not (food_item and quantity_text and availability and location_name):
+                st.error("⚠ Please fill all required fields.")
+            else:
+                chosen_lat, chosen_lon = None, None
                 try:
-                    loc = geolocator.geocode(location_name.strip() + ", India")
-                    if loc:
-                        chosen_lat, chosen_lon = loc.latitude, loc.longitude
+                    if map_data and map_data.get("last_clicked"):
+                        chosen_lat = map_data["last_clicked"]["lat"]
+                        chosen_lon = map_data["last_clicked"]["lng"]
                 except Exception:
                     pass
 
-            if chosen_lat is None or chosen_lon is None:
-                st.error("⚠ Could not determine exact location.")
-            else:
-                try:
-                    unique_id = f"{phone}{int(time.time()*1_000_000)}{uuid4().hex[:6]}"
+                if chosen_lat is None:
+                    try:
+                        loc = geolocator.geocode(location_name.strip() + ", India")
+                        if loc:
+                            chosen_lat, chosen_lon = loc.latitude, loc.longitude
+                    except Exception:
+                        pass
 
-                    new_donation = {
-                        "id": unique_id,
-                        "donor": st.session_state.user["name"],
-                        "phone": phone,
-                        "food": food_item,
-                        "quantity": quantity_text,
-                        "availability": availability,
-                        "location": location_name,
-                        "lat": float(chosen_lat),
-                        "lon": float(chosen_lon),
-                        "status": "active",
-                        "collector_name": None,
-                        "collector_phone": None,
-                        "created_at": now_ts(),
-                        "accepted_at": None,
-                        "picked_up_at": None,
-                        "cancelled_at": None,
-                    }
+                if chosen_lat is None or chosen_lon is None:
+                    st.error("⚠ Could not determine exact location.")
+                else:
+                    try:
+                        unique_id = f"{phone}{int(time.time()*1_000_000)}{uuid4().hex[:6]}"
 
-                    st.session_state.donations.append(new_donation)
-                    update_donations()
-                    st.success("🎉 Donation saved successfully!")
-                    st.rerun()
-                except Exception:
-                    st.error("⚠ Error saving donation.")
+                        # Parse availability into IST timestamp
+                        try:
+                            availability_dt = datetime.strptime(availability.strip(), "%Y-%m-%d %H:%M")
+                            availability_dt = tz.localize(availability_dt)  # localize to IST
+                            availability_ts = int(availability_dt.timestamp())
+                        except Exception:
+                            availability_ts = None
+
+                        new_donation = {
+                            "id": unique_id,
+                            "donor": st.session_state.user["name"],
+                            "phone": phone,
+                            "food": food_item,
+                            "quantity": quantity_text,
+                            "availability": availability,
+                            "availability_ts": availability_ts,
+                            "location": location_name,
+                            "lat": float(chosen_lat),
+                            "lon": float(chosen_lon),
+                            "status": "active",
+                            "collector_name": None,
+                            "collector_phone": None,
+                            "created_at": int(datetime.now(tz).timestamp()),
+                            "accepted_at": None,
+                            "picked_up_at": None,
+                            "cancelled_at": None,
+                            "cancel_reason": None,
+                        }
+
+                        st.session_state.donations.append(new_donation)
+                        update_donations()
+                        st.success("🎉 Donation saved successfully!")
+                        st.rerun()
+                    except Exception:
+                        st.error("⚠ Error saving donation.")
 
     # -------------------------------------------------------------------------
     # DONATION HISTORY
@@ -854,13 +886,15 @@ def donor_page():
                 accepted_at = fmt_time(d.get("accepted_at"))
                 picked_at = fmt_time(d.get("picked_up_at"))
                 cancelled_at = fmt_time(d.get("cancelled_at"))
+                reason = d.get("cancel_reason")
+
                 st.markdown(
                     f"- {d.get('food','?')} • {d.get('quantity','?')} • 📍 {d.get('location','?')} • "
                     f"🕒 Created: {fmt_time(d.get('created_at'))} • "
                     f"🏷 Status: {status}"
                     + (f" • 🤝 Accepted: {accepted_at}" if d.get("accepted_at") else "")
                     + (f" • ✅ Picked Up: {picked_at}" if d.get("picked_up_at") else "")
-                    + (f" • ❌ Cancelled: {cancelled_at}" if d.get("cancelled_at") else "")
+                    + (f" • ❌ Cancelled: {cancelled_at} ({reason})" if d.get("cancelled_at") else "")
                 )
         else:
             st.info("No donation history yet.")
@@ -896,7 +930,7 @@ def donor_page():
                     "reporter_phone": st.session_state.user["phone"],
                     "reason": reason,
                     "comment": comment,
-                    "created_at": now_ts(),
+                    "created_at": int(datetime.now(tz).timestamp()),
                     "status": "pending"
                 }
                 reports = load_reports()
@@ -909,8 +943,6 @@ def donor_page():
     if st.button("⬅ Back", key="btn_back_donor"):
         st.session_state.page = "role_select"
         st.rerun()
-
-# -----------------------------------------------------------------------------
 # COLLECTOR PAGE
 # -----------------------------------------------------------------------------
 def collector_page():
@@ -1168,23 +1200,55 @@ def collector_page():
         else:
             st.write("No completed pickups yet.")
 
-    if st.button("⬅ Back"):
-        st.session_state.page = "role_select"
-        st.rerun()
+    
 # ---------------------------
     # FEEDBACK (COLLECTOR)
     # ---------------------------
-    
     feedback_widget(role="collector")
 
     if st.button("⬅ Back", key="btn_back_collector"):
         st.session_state.page = "role_select"
         st.rerun()
 # -----------------------------------------------------------------------------
+# Helpers to load feedback records (NEW)
+# -----------------------------------------------------------------------------
+def load_feedback_records():
+    """
+    Safely load feedback entries from feedback.json or feedback_data.json.
+
+    Expected entry shape (any missing fields are handled safely):
+    {
+        "name": "Alice",
+        "user_type": "donor" | "collector",
+        "rating": 4 or "4" or None,
+        "feedback": "Great experience!" or "",
+        "allow_name": true/false,   # if False -> show 'Anonymous'
+        "created_at": 1700000000    # optional unix ts
+    }
+    """
+    candidates = ["feedback.json", "feedback_data.json"]
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                # Ensure list
+                if isinstance(data, dict):
+                    # some apps store { "items": [...] }
+                    data = data.get("items", [])
+                if not isinstance(data, list):
+                    return []
+                return data
+            except json.JSONDecodeError:
+                return []
+            except Exception:
+                return []
+    return []
+
+
+# -----------------------------------------------------------------------------
 # COMMUNITY PAGE (placeholder)
 # -----------------------------------------------------------------------------
-
-
 def community_page():
     st.header("🤝 Community Dashboard")
     st.write("Here the community can view resources and events.")
@@ -1248,14 +1312,69 @@ def community_page():
         caption = metadata.get(filename, "No caption provided")
         st.image(img_path, caption=caption, use_container_width=True)
 
+    # -------------------------------------------------------------------------
+# NEW: Reviews button & viewer (shows rating, feedback, and name if allowed)
+# -------------------------------------------------------------------------
+    st.write("---")
+    st.subheader("🗣 Community Reviews")
 
+# Button that reveals reviews
+    if st.button("📝 View Community Reviews", key="btn_view_reviews"):
+        feedbacks = load_feedback_records()
+
+        if not feedbacks:
+          st.info("No reviews yet. Be the first to share your experience! 🌟")
+        else:
+        # Optional: simple sorting by created_at if present
+          def _sort_key(x):
+            return x.get("created_at") or 0
+          feedbacks = sorted(feedbacks, key=_sort_key, reverse=True)
+
+          for idx, fb in enumerate(feedbacks):
+            # Name visibility
+            allow_name = not fb.get("anonymous", False)
+            raw_name = fb.get("user_name") or "Anonymous"
+            name_to_show = raw_name if allow_name else "Anonymous"
+
+            # User type, rating, and feedback text
+            user_type = fb.get("role", "")
+            rating = fb.get("rating", None)
+            # Coerce rating string -> int if possible
+            try:
+                if isinstance(rating, str) and rating.strip() != "":
+                    rating = int(float(rating))
+            except Exception:
+                pass
+
+            feedback_text = (fb.get("text") or "").strip()
+
+            # Skip completely empty entries (no rating and no feedback text)
+            if rating in (None, "", 0) and feedback_text == "":
+                continue
+
+            with st.container():
+                # Header line with name and type
+                st.markdown(f"👤 {name_to_show}{' (' + user_type + ')' if user_type else ''}")
+
+                # Show rating if provided
+                if rating not in (None, "", 0):
+                    st.markdown(f"⭐ *Rating:* {rating}/5")
+
+                # Show feedback sentence if provided
+                if feedback_text:
+                    st.markdown(f"📝 {feedback_text}")
+
+                # Optional divider
+                st.markdown("---")
 
 
 # ---------------- Admin Panel ----------------
-
 def admin_panel():
     st.header("🛡 Admin Panel — Review Reports")
     reports = load_reports()
+    if st.button("⬅ Back "):
+        st.session_state["page"] = "admin_panel()"   # switch back to Admin Page
+        st.rerun()
 
     for r in reports:
         if r["status"] == "pending":
@@ -1278,6 +1397,7 @@ def admin_panel():
                     st.info("Report rejected.")
                     st.rerun()
 
+
 # ROUTER
 # -----------------------------------------------------------------------------
 def main_router():
@@ -1296,17 +1416,14 @@ def main_router():
         #my_feedback_page()    
     elif page == "admin_panel":
         admin_panel()
-
     else:
         st.session_state.page = "login"
         st.rerun()
+
 
 # -----------------------------------------------------------------------------
 # ENTRYPOINT
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     main_router()
-
-
-
 
