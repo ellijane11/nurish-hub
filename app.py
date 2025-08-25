@@ -421,7 +421,9 @@ def feedback_excerpt(text: str, width: int = 160) -> str:
 gmail_pattern = r"^[a-zA-Z0-9._%+-]+@gmail\.com$"
 
 def login_page():
-    st.markdown("<h1 style='text-align: center;'>🍽 FOOD IS HOPE</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🍽 NOURISH HUB</h1>", unsafe_allow_html=True)
+    st.markdown("<h4 style='text-align: center;'>FOOD IS HOPE</h4>", unsafe_allow_html=True)
+
     st.markdown("<h3 style='text-align: center;'>LOGIN or REGISTER</h3>", unsafe_allow_html=True)
 
     with st.form("login_form_unique"):
@@ -537,9 +539,9 @@ def feedback_widget(role: str, possible_donation_id: Optional[str] = None, statu
 
     st.write("---")
     with st.expander("📝 Share Feedback (optional)"):
-       st.write("We appreciate your thoughts. This is anonymous if you choose, and we don’t reply individually.")
+     st.caption("We appreciate your thoughts. This is anonymous if you choose, and we don’t reply individually.")
 
-       with st.form(f"form_feedback_{block_key}"):
+     with st.form(f"form_feedback_{block_key}"):
         txt = st.text_area(
             "Your feedback",
             help="Share anything about your experience. (Min 5 characters)",
@@ -687,7 +689,7 @@ def donor_page():
     # Notifications — PICKED UP
     # -------------------------------------------------------------------------
     if picked_up:
-        st.subheader("✅ Picked Up")
+        
         for idx, d in enumerate(sorted(picked_up, key=lambda x: x.get("picked_up_at") or 0, reverse=True)):
             cname = d.get("collector_name") or "Collector"
             when = fmt_time(d.get("picked_up_at"))
@@ -903,46 +905,94 @@ def donor_page():
     # FEEDBACK
     # -------------------------------------------------------------------------
     feedback_widget(role="donor")
-
     # -------------------------------------------------------------------------
     # REPORT A COLLECTOR (Moved to Bottom)
     # -------------------------------------------------------------------------
     st.write("---")
-    st.markdown("### 🚨 Report a Collector")
+    with st.expander("### 🚨 Report a Collector"):
 
-    interacted_collectors = [d for d in st.session_state.get("interactions", []) if d["type"] == "collector"]
+    # 🔹 Ensure interactions are loaded from JSON
+     def load_interactions():
+      try:
+        return load_json("interactions.json")
+      except Exception:
+        return []
 
-    if interacted_collectors:
-        selected_collector = st.selectbox(
-            "Select a collector to report",
-            interacted_collectors,
-            format_func=lambda c: f"{c['name']} ({c['phone']})"
-        )
+     def save_interactions(interactions):
+      save_json("interactions.json", interactions)
 
-        form_key = f"report_form_{selected_collector['phone']}{selected_collector.get('name','')}{selected_collector.get('id','')}"
-        with st.form(key=form_key):
-            reason = st.text_input("Reason for report")
-            comment = st.text_area("Additional comments")
-            if st.form_submit_button("Submit Report"):
-                new_report = {
-                    "id": short_id("rep_"),
-                    "reported_phone": selected_collector["phone"],
-                    "reporter_phone": st.session_state.user["phone"],
-                    "reason": reason,
-                    "comment": comment,
-                    "created_at": int(datetime.now(tz).timestamp()),
-                    "status": "pending"
-                }
-                reports = load_reports()
-                reports.append(new_report)
-                save_reports(reports)
-                st.success(f"✅ Report submitted for {selected_collector['name']}")
-    else:
-        st.info("No past collector interactions found to report.")
+# Load all collectors from a separate file or define default collectors
+     def load_all_collectors():
+      try:
+        return load_json("collectors.json")  # your master list of collectors
+      except Exception:
+        # Default list if collectors.json does not exist
+        return [
+            {"id": "col_1", "name": "Collector One", "phone": "1234567890"},
+            {"id": "col_2", "name": "Collector Two", "phone": "9876543210"}
+        ]
+
+# Keep session_state in sync with JSON
+     if "interactions" not in st.session_state:
+      st.session_state["interactions"] = load_interactions()
+
+# Load collectors
+     all_collectors = load_all_collectors()
+
+# Filter collectors based on past interactions (optional)
+     interacted_collectors = [
+     d for d in st.session_state["interactions"] if d.get("type") == "collector"
+      ]
+
+# Use interacted_collectors if available, else use all_collectors
+     collector_options = interacted_collectors if interacted_collectors else all_collectors
+
+     selected_collector = st.selectbox(
+      " Select a collector to report",
+      collector_options,
+      format_func=lambda c: f"{c.get('name','Unknown')} ({c.get('phone','N/A')})"
+      )
+
+     form_key = f"report_form_{selected_collector['phone']}{selected_collector.get('name','')}{selected_collector.get('id','')}"
+     with st.form(key=form_key):
+      reason = st.text_input("Reason for report")
+      comment = st.text_area("Additional comments")
+      if st.form_submit_button("Submit Report"):
+        new_report = {
+            "id": short_id("rep_"),
+            "reported_phone": selected_collector["phone"],
+            "reporter_phone": st.session_state.user["phone"],
+            "reason": reason,
+            "comment": comment,
+            "created_at": int(datetime.now(tz).timestamp()),
+            "status": "pending"
+        }
+
+        reports = load_reports()
+        reports.append(new_report)
+        save_reports(reports)
+
+        # 🔹 Log interaction into JSON so it's persisted
+        new_interaction = {
+            "id": short_id("int_"),
+            "type": "collector",
+            "name": selected_collector.get("name", ""),
+            "phone": selected_collector.get("phone", ""),
+            "report_id": new_report["id"],
+            "created_at": new_report["created_at"]
+        }
+        st.session_state["interactions"].append(new_interaction)
+        save_interactions(st.session_state["interactions"])
+
+        st.success(f"✅ Report submitted for {selected_collector['name']}")
+
+        if not interacted_collectors:
+         st.info("No past collector interactions found to report.")
 
     if st.button("⬅ Back", key="btn_back_donor"):
-        st.session_state.page = "role_select"
-        st.rerun()
+      st.session_state.page = "role_select"
+      st.rerun()
+
 # COLLECTOR PAGE
 # -----------------------------------------------------------------------------
 def collector_page():
@@ -953,7 +1003,6 @@ def collector_page():
 🚴 Deliver with care and speed so every meal stays fresh and tasty.
 """, unsafe_allow_html=True)
     
-
     with st.form("collector_location_form"):
         collector_location = st.text_input("📍 Enter Your Location (required, e.g., 'Indiranagar, Bangalore')")
         submitted = st.form_submit_button("Set My Location")
@@ -1200,7 +1249,6 @@ def collector_page():
         else:
             st.write("No completed pickups yet.")
 
-    
 # ---------------------------
     # FEEDBACK (COLLECTOR)
     # ---------------------------
@@ -1426,4 +1474,3 @@ def main_router():
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     main_router()
-
